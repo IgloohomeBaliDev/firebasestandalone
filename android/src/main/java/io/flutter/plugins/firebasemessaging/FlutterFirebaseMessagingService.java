@@ -6,21 +6,36 @@ package io.flutter.plugins.firebasemessaging;
 
 import android.app.ActivityManager;
 import android.app.KeyguardManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationChannelGroup;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Process;
 import android.util.Log;
+
+import androidx.core.app.NotificationCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.PluginRegistry;
 import io.flutter.view.FlutterCallbackInformation;
 import io.flutter.view.FlutterMain;
 import io.flutter.view.FlutterNativeView;
 import io.flutter.view.FlutterRunArguments;
+
+import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -29,11 +44,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
 
   public static final String ACTION_REMOTE_MESSAGE =
-      "io.flutter.plugins.firebasemessaging.NOTIFICATION";
+          "io.flutter.plugins.firebasemessaging.NOTIFICATION";
   public static final String EXTRA_REMOTE_MESSAGE = "notification";
 
   public static final String ACTION_TOKEN = "io.flutter.plugins.firebasemessaging.TOKEN";
@@ -42,7 +58,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
   private static final String SHARED_PREFERENCES_KEY = "io.flutter.android_fcm_plugin";
   private static final String BACKGROUND_SETUP_CALLBACK_HANDLE_KEY = "background_setup_callback";
   private static final String BACKGROUND_MESSAGE_CALLBACK_HANDLE_KEY =
-      "background_message_callback";
+          "background_message_callback";
 
   // TODO(kroikie): make isIsolateRunning per-instance, not static.
   private static AtomicBoolean isIsolateRunning = new AtomicBoolean(false);
@@ -55,12 +71,12 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
   private static Long backgroundMessageHandle;
 
   private static List<RemoteMessage> backgroundMessageQueue =
-      Collections.synchronizedList(new LinkedList<RemoteMessage>());
+          Collections.synchronizedList(new LinkedList<RemoteMessage>());
 
   private static PluginRegistry.PluginRegistrantCallback pluginRegistrantCallback;
 
   private static final String TAG = "FlutterFcmService";
-
+  private static final String C_TAG = "FCM custom notif";
   private static Context backgroundContext;
 
   @Override
@@ -99,20 +115,156 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
       } else {
         final CountDownLatch latch = new CountDownLatch(1);
         new Handler(getMainLooper())
-            .post(
-                new Runnable() {
-                  @Override
-                  public void run() {
-                    executeDartCallbackInBackgroundIsolate(
-                        FlutterFirebaseMessagingService.this, remoteMessage, latch);
-                  }
-                });
+                .post(
+                        new Runnable() {
+                          @Override
+                          public void run() {
+                            executeDartCallbackInBackgroundIsolate(
+                                    FlutterFirebaseMessagingService.this, remoteMessage, latch);
+                          }
+                        });
         try {
           latch.await();
         } catch (InterruptedException ex) {
           Log.i(TAG, "Exception waiting to execute Dart callback", ex);
         }
       }
+      handleBackgroundNotification(remoteMessage);
+    }
+  }
+
+  private static AtomicInteger c = new AtomicInteger(0);
+  public static int getID() {
+    return c.incrementAndGet();
+  }
+  private static final String CLICK_ACTION_VALUE = "FLUTTER_NOTIFICATION_CLICK";
+  String currentTimeInMillis = Long.toString(System.currentTimeMillis());
+
+  void handleBackgroundNotification(RemoteMessage remoteMessage) {
+    int notificationId = (int) System.currentTimeMillis();
+    int bodyNotificationId = getID();
+    String GROUP_PUSH_NOTIFICATION = "com.android.example.PUSH_NOTIFICATION";
+    String groupId = "push_notification";
+    String groupName = "Push Notification";
+    Log.d(C_TAG, remoteMessage.toString());
+    Log.d(C_TAG, "onMessageReceived id: " + notificationId);
+    Map<String, String> message = remoteMessage.getData();
+    JSONObject messageObject = new JSONObject(message);
+    int summaryIcon = getIconFromDrawable(messageObject.optString("@mipmap/ic_launcher"));
+
+    NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "noti_push_app_1");
+    builder.setContentTitle(messageObject.optString("title"));
+    builder.setContentText(messageObject.optString("body"));
+    builder.setContentIntent(getPendingIntent(remoteMessage, notificationId, bodyNotificationId));
+    builder.setSmallIcon(this.getApplicationInfo().icon);
+    builder.setAutoCancel(true);
+    builder.setGroup(groupId);
+    if (remoteMessage.getData().containsKey("actions")) {
+      try {
+        String actionsOject = messageObject.optString("actions");
+        Log.d(C_TAG, actionsOject);
+        JSONArray actions = new JSONArray(actionsOject);
+        for (int i = 0; i < actions.length(); i++) {
+          Log.d(C_TAG, messageObject.toString());
+          JSONObject actionObject = actions.getJSONObject(i);
+          final String action = actionObject.optString("title");
+          if (action.equals("REJECT") || action.equals("CANCEL") || action.equals("CLOSE")) {
+            ///do nothing if action is reject/cancel/close
+            Intent notificationIntent = new Intent();
+            PendingIntent pendingIntent = PendingIntent.getActivity(getApplicationContext(), 0, notificationIntent, 0);
+            int icon = getIconFromDrawable(actionObject.optString("@mipmap/ic_launcher"));
+            builder.addAction(new NotificationCompat.Action.Builder(icon, action, pendingIntent).build());
+          } else {
+            int icon = getIconFromDrawable(actionObject.optString("@mipmap/ic_launcher"));
+            Log.d("ICON", actionObject.optString("@mipmap/ic_launcher"));
+            Log.d("NOTIFICATION_ID", Integer.toString(notificationId));
+            Log.d("currentTimeMillis", currentTimeInMillis);
+
+            builder.addAction(new NotificationCompat.Action.Builder(icon, action, getActionPendingIntent(remoteMessage, notificationId)).build());
+          }
+        }
+      } catch (JSONException e) {
+        e.printStackTrace();
+      }
+    }
+    NotificationManager notificationManager = (NotificationManager) this.getSystemService(Context.NOTIFICATION_SERVICE);
+
+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+      String channelId = "noti_push_app_1";
+      String channelName = "noti_push_app";
+      int importance = NotificationManager.IMPORTANCE_HIGH;
+      NotificationChannel mChannel = new NotificationChannel(
+              channelId, channelName, importance);
+      notificationManager.createNotificationChannelGroup(new NotificationChannelGroup(groupId, groupName));
+      notificationManager.createNotificationChannel(mChannel);
+
+    }
+
+    Notification summaryNotification =
+            new NotificationCompat.Builder(this, "noti_push_app_1")
+                    .setContentTitle(messageObject.optString("title"))
+                    //set content text to support devices running API level < 24
+                    .setContentText("Two new messages")
+                    //build summary info into InboxStyle template
+                    .setStyle(new NotificationCompat.InboxStyle())
+                    //specify which group this notification belongs to
+                    .setGroup(groupId)
+                    .setPriority(NotificationCompat.PRIORITY_MIN)
+                    //set this notification as the summary for the group
+                    .setGroupSummary(true)
+                    .setSmallIcon(R.drawable.common_google_signin_btn_icon_dark)
+                    .build();
+
+    notificationManager.notify(notificationId, builder.build());
+    if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      notificationManager.notify(0, summaryNotification);
+    }
+  }
+
+  PendingIntent getActionPendingIntent(RemoteMessage remoteMessage, int notifId) {
+    Log.d("notifId", Integer.toString(notifId));
+    RemoteMessage message = new RemoteMessage.Builder("message from server")
+            .setMessageId(remoteMessage.getMessageId())
+            .setData(remoteMessage.getData())
+            .build();
+    Intent launchIntent = message.toIntent();
+    launchIntent.putExtra("actionClick", "ACCEPT");
+    launchIntent.putExtra("notifId", Integer.toString(notifId));
+    launchIntent.setAction(CLICK_ACTION_VALUE);
+
+    return PendingIntent.getActivity(
+            getApplicationContext(),
+            notifId,
+            launchIntent,
+            0);
+  }
+
+  PendingIntent getPendingIntent(RemoteMessage remoteMessage, int notifId, int bodyResponse) {
+    String packageName = getApplication().getPackageName();
+    Log.d("the package is : ", packageName);
+    RemoteMessage message = new RemoteMessage.Builder("message from server")
+            .setMessageId(remoteMessage.getMessageId())
+            .setData(remoteMessage.getData())
+            .build();
+    Intent launchIntent = message.toIntent();
+    launchIntent.putExtra("actionClick", "BODY");
+    launchIntent.putExtra("notifId", Integer.toString(notifId));
+    launchIntent.setAction(CLICK_ACTION_VALUE);
+    return PendingIntent.getActivity(
+            getApplicationContext(),
+            bodyResponse,
+            launchIntent,
+            0);
+  }
+  int getIconFromDrawable(String name) {
+    try {
+      Class res = R.drawable.class;
+      Field field = res.getField(name);
+      return field.getInt(null);
+    } catch (Exception e) {
+      Log.e(C_TAG, "Failed to get drawable id from name " + name, e);
+      return 0;
     }
   }
 
@@ -142,7 +294,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
     FlutterMain.ensureInitializationComplete(context, null);
     String appBundlePath = FlutterMain.findAppBundlePath();
     FlutterCallbackInformation flutterCallback =
-        FlutterCallbackInformation.lookupCallbackInformation(callbackHandle);
+            FlutterCallbackInformation.lookupCallbackInformation(callbackHandle);
     if (flutterCallback == null) {
       Log.e(TAG, "Fatal: failed to find callback");
       return;
@@ -238,8 +390,8 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
    */
   public static Long getBackgroundMessageHandle(Context context) {
     return context
-        .getSharedPreferences(SHARED_PREFERENCES_KEY, 0)
-        .getLong(BACKGROUND_MESSAGE_CALLBACK_HANDLE_KEY, 0);
+            .getSharedPreferences(SHARED_PREFERENCES_KEY, 0)
+            .getLong(BACKGROUND_MESSAGE_CALLBACK_HANDLE_KEY, 0);
   }
 
   /**
@@ -254,10 +406,10 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
    *     any waiting threads to continue.
    */
   private static void executeDartCallbackInBackgroundIsolate(
-      Context context, RemoteMessage remoteMessage, final CountDownLatch latch) {
+          Context context, RemoteMessage remoteMessage, final CountDownLatch latch) {
     if (backgroundChannel == null) {
       throw new RuntimeException(
-          "setBackgroundChannel was not called before messages came in, exiting.");
+              "setBackgroundChannel was not called before messages came in, exiting.");
     }
 
     // If another thread is waiting, then wake that thread when the callback returns a result.
@@ -307,7 +459,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
   // TODO(kroikie): Find a better way to determine application state.
   private static boolean isApplicationForeground(Context context) {
     KeyguardManager keyguardManager =
-        (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+            (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
 
     if (keyguardManager.isKeyguardLocked()) {
       return false;
@@ -315,7 +467,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
     int myPid = Process.myPid();
 
     ActivityManager activityManager =
-        (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
 
     List<ActivityManager.RunningAppProcessInfo> list;
 
