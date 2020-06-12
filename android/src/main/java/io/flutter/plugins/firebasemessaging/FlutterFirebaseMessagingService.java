@@ -196,6 +196,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
       int importance = NotificationManager.IMPORTANCE_HIGH;
       NotificationChannel mChannel = new NotificationChannel(
               channelId, channelName, importance);
+      mChannel.setShowBadge(false);
       notificationManager.createNotificationChannelGroup(new NotificationChannelGroup(groupId, groupName));
       notificationManager.createNotificationChannel(mChannel);
 
