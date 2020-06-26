@@ -308,7 +308,12 @@ public class FirebaseMessagingPlugin extends BroadcastReceiver
             || CLICK_ACTION_VALUE.equals(intent.getStringExtra("click_action"))) {
       Map<String, Object> message = new HashMap<>();
       Bundle extras = intent.getExtras();
-      notificationManager.cancel(Integer.parseInt(intent.getExtras().getString("notifId")));
+      try {
+        int notifId = intent.getExtras().getInt("notifId");
+        notificationManager.cancel(notifId);
+      } catch (Exception e){
+        Log.e("sendMessageFromIntent", e.toString());
+      }
 
       if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
         int activeNotifications = notificationManager.getActiveNotifications().length;

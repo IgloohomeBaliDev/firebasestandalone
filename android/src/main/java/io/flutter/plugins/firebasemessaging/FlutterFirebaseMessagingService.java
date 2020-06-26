@@ -230,7 +230,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
             .build();
     Intent launchIntent = message.toIntent();
     launchIntent.putExtra("actionClick", "ACCEPT");
-    launchIntent.putExtra("notifId", Integer.toString(notifId));
+    launchIntent.putExtra("notifId", notifId);
     launchIntent.setAction(CLICK_ACTION_VALUE);
 
     return PendingIntent.getActivity(
@@ -249,7 +249,7 @@ public class FlutterFirebaseMessagingService extends FirebaseMessagingService {
             .build();
     Intent launchIntent = message.toIntent();
     launchIntent.putExtra("actionClick", "BODY");
-    launchIntent.putExtra("notifId", Integer.toString(notifId));
+    launchIntent.putExtra("notifId", notifId);
     launchIntent.setAction(CLICK_ACTION_VALUE);
     return PendingIntent.getActivity(
             getApplicationContext(),
